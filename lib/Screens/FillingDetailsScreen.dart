@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../api_constants.dart';
-import 'fillingdetailsupdatepage.dart';
+import 'FillingRequestUpdatePage.dart';
 
 class FillingDetailsScreen extends StatefulWidget {
   final Map<String, dynamic> fillingData;
@@ -18,6 +18,13 @@ class _FillingDetailsScreenState extends State<FillingDetailsScreen> {
 
   final TextEditingController _otpController = TextEditingController();
   bool _isSubmitting = false;
+  String? _generatedOtp;
+
+  @override
+  void initState() {
+    super.initState();
+    _generateOtp();
+  }
 
 
   Future<void> _submitOtp() async {
@@ -38,7 +45,7 @@ class _FillingDetailsScreenState extends State<FillingDetailsScreen> {
 
     setState(() => _isSubmitting = true);
 
-    final url = Uri.parse("${ApiConstants.baseUrl}/freq_otp_check");
+    final url = Uri.parse(ApiConstants.freqOtpCheck);
 
     try {
       final response = await http.post(
@@ -61,18 +68,17 @@ class _FillingDetailsScreenState extends State<FillingDetailsScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("OTP Verified")),
         );
-
-        // Navigate to Filling Request Update Page
-        // Navigator.push(
-        //   context,
-        //   MaterialPageRoute(
-        //     builder: (_) => FillingRequestUpdatePage(
-        //       // requestId: requestId.toString(),
-        //       // staffId: staffId.toString(),
-        //       fillingData: widget.fillingData, // passing entire map
-        //     ),
-        //   ),
-        // );
+        final result = await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => FillingRequestUpdatePage(
+              fillingData: widget.fillingData,
+            ),
+          ),
+        );
+        if (result != null) {
+          Navigator.pop(context, result);
+        }
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(result['msg'] ?? "Verification Failed")),
@@ -86,6 +92,26 @@ class _FillingDetailsScreenState extends State<FillingDetailsScreen> {
     }
 
     setState(() => _isSubmitting = false);
+  }
+
+  Future<void> _generateOtp() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final staffId = prefs.getString('staff_id') ?? '';
+      final requestId = (widget.fillingData['id'] ?? widget.fillingData['rid']).toString();
+      final uri = Uri.parse(ApiConstants.freqOtpGenerate);
+      final resp = await http.post(uri, headers: {'Content-Type': 'application/json'}, body: json.encode({'staff_id': staffId, 'request_id': requestId}));
+      if (resp.statusCode == 200) {
+        final j = json.decode(resp.body);
+        final otp = j['otp'] ?? j['data']?['otp'] ?? j['code'] ?? '';
+        if (otp.toString().isNotEmpty) {
+          setState(() {
+            _generatedOtp = otp.toString();
+            _otpController.text = _generatedOtp!;
+          });
+        }
+      }
+    } catch (_) {}
   }
 
   @override
@@ -112,103 +138,119 @@ class _FillingDetailsScreenState extends State<FillingDetailsScreen> {
           body: Padding(
             padding: const EdgeInsets.all(16.0),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // --- Box 1 ---
-                Container(
-                  decoration: BoxDecoration(
-                    border: Border.all(color: Colors.grey.shade400),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  padding: const EdgeInsets.all(0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      infoRow("OTP", widget.fillingData['otp']),
-                      infoRow("Request ID", widget.fillingData['rid']),
-                      infoRow("Vehicle Number", widget.fillingData['vehicle_number']),
-                      infoRow("Product Name", widget.fillingData['product_name']),
-                      infoRow("Loading Station", widget.fillingData['station_name']),
-                      infoRow("Customer Name", widget.fillingData['customer_name']),
-                      // infoRow("Quantity", widget.fillingData['qty'] ?? "N/A"),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 16),
-
-                // --- Note ---
-                const Text(
-                  "Note: Recheck details for particular vehicle number",
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                    color: Colors.black87,
-                  ),
-                ),
-
-                const SizedBox(height: 16),
-
-                // --- Box 2: OTP input ---
-                Container(
-                  padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
-                  decoration: BoxDecoration(
-                    border: Border.all(color: Colors.black26),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    children: [
-                      const SizedBox(
-                        width: 100,
-                        child: Text(
-                          "Enter Otp",
-                          style: TextStyle(fontWeight: FontWeight.w500),
-                        ),
-                      ),
-                      Container(
-                        width: 1,
-                        height: 24,
-                        color: Colors.black26,
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: TextFormField(
-                          controller: _otpController,
-                          decoration: InputDecoration(
-                            isDense: true,
-                            contentPadding: EdgeInsets.symmetric(vertical: 4),
-                            border: InputBorder.none,
-                            hintText: "Enter otp",
-                            hintStyle: TextStyle(color: Colors.red),
+                Expanded(
+                  child: SingleChildScrollView(
+                    physics: const BouncingScrollPhysics(),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // --- Box 1 ---
+                        Container(
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            border: Border.all(color: Colors.grey.shade300),
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.05),
+                                blurRadius: 8,
+                                offset: const Offset(0, 2),
+                              )
+                            ],
                           ),
-                          keyboardType: TextInputType.number,
+                          padding: const EdgeInsets.all(0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              infoRow("OTP", _generatedOtp ?? widget.fillingData['otp']),
+                              infoRow("Request ID", widget.fillingData['rid']),
+                              infoRow("Vehicle Number", widget.fillingData['vehicle_number']),
+                              infoRow("Product Name", widget.fillingData['product_name']),
+                              infoRow("Loading Station", widget.fillingData['station_name']),
+                              infoRow("Customer Name", widget.fillingData['customer_name']),
+                              infoRow("Actual Quantity", widget.fillingData['aqty'] ?? widget.fillingData['qty'] ?? "N/A"),
+                            ],
+                          ),
                         ),
-                      ),
-                    ],
+
+                        const SizedBox(height: 16),
+
+                        // --- Note ---
+                        const Text(
+                          "Note: Recheck details for particular vehicle number",
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.black87,
+                          ),
+                        ),
+
+                        const SizedBox(height: 16),
+
+                        // --- Box 2: OTP input ---
+                        Container(
+                          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            border: Border.all(color: Colors.black12),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(
+                            children: [
+                              const SizedBox(
+                                width: 100,
+                                child: Text(
+                                  "Enter Otp",
+                                  style: TextStyle(fontWeight: FontWeight.w500),
+                                ),
+                              ),
+                              Container(
+                                width: 1,
+                                height: 24,
+                                color: Colors.black12,
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: TextFormField(
+                                  controller: _otpController,
+                                  decoration: InputDecoration(
+                                    isDense: true,
+                                    border: InputBorder.none,
+                                    hintText: "Enter otp",
+                                    hintStyle: const TextStyle(color: Colors.red),
+                                  ),
+                                  keyboardType: TextInputType.number,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        Center(
+                          child: ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF19567A),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              elevation: 2,
+                              padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
+                            ),
+                            onPressed: _isSubmitting ? null : _submitOtp,
+                            child: _isSubmitting
+                                ? const CircularProgressIndicator(color: Colors.white)
+                                : const Text(
+                                    "Submit",
+                                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                                  ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-
-                const SizedBox(height: 24),
-
-                // --- Submit Button ---
-                Center(
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF19567A),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
-                    ),
-                    onPressed: _isSubmitting ? null : _submitOtp,
-                    child: _isSubmitting
-                        ? const CircularProgressIndicator(color: Colors.white)
-                        : const Text(
-                      "Submit",
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
-                    ),
-                  ),
-                ),
+                const SizedBox(height: 8),
               ],
             ),
           ),

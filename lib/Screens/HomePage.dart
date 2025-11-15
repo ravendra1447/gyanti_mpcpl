@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import '../api_constants.dart';
 import 'my_details.dart';
 import 'FillingRequestPage.dart';
@@ -780,16 +781,22 @@ class _HomePageState extends State<HomePage> {
                   ),
                   Expanded(
                     child: ElevatedButton(
-                      onPressed: vehicleController.text.length >= 9
-                          ? () {
+                      onPressed: () async {
+                        final vnum = vehicleController.text.trim();
+                        if (vnum.length < 6) {
+                          _showInfoDialog('Invalid Input', 'Please enter valid vehicle number (min 6 characters)');
+                          return;
+                        }
                         Navigator.pop(context);
-                        _showInfoDialog("Search", "Searching for ${vehicleController.text}");
-                      }
-                          : null,
+                        await _fetchFillingRequests(vnum);
+                      },
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Color(0xFF13688B),
+                        backgroundColor: Colors.teal,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        elevation: 2,
                       ),
-                      child: Text('Search'),
+                      child: const Text('Search'),
                     ),
                   ),
                 ],
@@ -820,6 +827,231 @@ class _HomePageState extends State<HomePage> {
         MaterialPageRoute(builder: (_) => StationDetailsPage(stations: stations)),
       );
     });
+  }
+
+  Future<void> _fetchFillingRequests(String vehicleNumber) async {
+    try {
+      print("=== 🚀 FETCH FILLING REQUESTS STARTED ===");
+      setState(() => isApiLoading = true);
+
+      final prefs = await SharedPreferences.getInstance();
+      final staffId = prefs.getString('staff_id') ?? '';
+      final role = prefs.getString('role') ?? '';
+
+      print("📤 Request Details:");
+      print("   URL: ${ApiConstants.fillingReqList}");
+      print("   Staff ID: '$staffId'");
+      print("   Role: '$role'");
+      print("   Vehicle: '$vehicleNumber'");
+
+      final uri = Uri.parse(ApiConstants.fillingReqList);
+      final response = await http.post(
+        uri,
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {
+          'vehicle_number': vehicleNumber,
+          'staff_id': staffId,
+          'role': role,
+        },
+      ).timeout(Duration(seconds: 30));
+
+      print("=== 📥 API RESPONSE ===");
+      print("   Status Code: ${response.statusCode}");
+      print("   Body Length: ${response.body.length}");
+
+      // Print only first 500 characters to avoid too long logs
+      final bodyPreview = response.body.length > 500
+          ? "${response.body.substring(0, 500)}..."
+          : response.body;
+      print("   Body Preview: $bodyPreview");
+
+      setState(() => isApiLoading = false);
+
+      // 🎯 IMPROVED ERROR HANDLING
+      if (response.statusCode == 500) {
+        _handle500Error(response, vehicleNumber);
+        return;
+      }
+
+      if (response.statusCode != 200 && response.statusCode != 201) {
+        _showInfoDialog(
+            'HTTP Error',
+            'Failed to fetch requests\nStatus Code: ${response.statusCode}'
+        );
+        return;
+      }
+
+      // ✅ Safe JSON decoding
+      if (response.body.isEmpty) {
+        _showInfoDialog('Error', 'Empty response from server');
+        return;
+      }
+
+      final decoded = json.decode(response.body);
+      print("🔍 Decoded Response Type: ${decoded.runtimeType}");
+
+      // ✅ Check API-level status
+      final apiStatus = decoded['status'];
+      if (apiStatus != 200) {
+        final errorMsg = decoded['msg'] ?? 'Unknown API error';
+        final errors = decoded['errors'] ?? {};
+
+        String errorDetails = 'API Error: $errorMsg';
+        if (errors.isNotEmpty) {
+          errorDetails += '\n\nDetails: $errors';
+        }
+
+        _showInfoDialog('API Error', errorDetails);
+        return;
+      }
+
+      // ✅ Extract data with better error handling
+      List<Map<String, dynamic>> list = [];
+
+      if (decoded['data'] != null) {
+        final data = decoded['data'];
+        print("📊 Data Type: ${data.runtimeType}");
+
+        if (data is Map && data['filling_requests'] is List) {
+          list = List<Map<String, dynamic>>.from(data['filling_requests']);
+          print("✅ Found ${list.length} requests in data.filling_requests");
+        }
+        else if (data is List) {
+          list = List<Map<String, dynamic>>.from(data);
+          print("✅ Found ${list.length} requests in data list");
+        }
+        else if (data is Map) {
+          // Try other possible keys
+          final possibleKeys = ['requests', 'records', 'list', 'filling_requests'];
+          for (final key in possibleKeys) {
+            if (data[key] is List) {
+              list = List<Map<String, dynamic>>.from(data[key]);
+              print("✅ Found ${list.length} requests in data.$key");
+              break;
+            }
+          }
+        }
+      }
+
+      // ✅ If no data found, check for message
+      if (list.isEmpty) {
+        final apiMsg = decoded['msg'] ?? 'No filling requests found';
+        _showInfoDialog('Information', '$apiMsg for vehicle $vehicleNumber');
+        return;
+      }
+
+      // ✅ Add vehicle number if missing
+      for (final m in list) {
+        m['vehicle_number'] = m['vehicle_number'] ?? vehicleNumber;
+      }
+
+      print("🚀 Navigating to FillingRequestPage with ${list.length} requests");
+
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => FillingRequestPage(requestList: list),
+        ),
+      );
+
+    } catch (e) {
+      setState(() => isApiLoading = false);
+      print("=== ❌ EXCEPTION ===");
+      print("Error: $e");
+      _showInfoDialog('Error', 'Exception occurred: $e');
+    }
+  }
+
+  void _handle500Error(http.Response response, String vehicleNumber) {
+    print("🎯 Handling 500 Error");
+
+    // Show detailed error dialog
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.error_outline, color: Colors.red),
+            SizedBox(width: 8),
+            Text("Server Error 500"),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                "Server returned 500 Internal Server Error",
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              SizedBox(height: 10),
+              Text("This is a SERVER-SIDE issue."),
+              SizedBox(height: 10),
+              Text("Possible causes:"),
+              SizedBox(height: 5),
+              Text("• API server is down"),
+              Text("• Database connection failed"),
+              Text("• Server code has errors"),
+              SizedBox(height: 10),
+              Text("Response from server:"),
+              Container(
+                padding: EdgeInsets.all(8),
+                margin: EdgeInsets.only(top: 5),
+                decoration: BoxDecoration(
+                  color: Colors.grey[100],
+                  borderRadius: BorderRadius.circular(5),
+                ),
+                child: Text(
+                  response.body.isEmpty ? "Empty response" : response.body,
+                  style: TextStyle(fontFamily: 'Monospace', fontSize: 10),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('OK'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              // Try with mock data as fallback
+              _useMockData(vehicleNumber);
+            },
+            child: Text('Use Demo Data'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _useMockData(String vehicleNumber) {
+    print("🔄 Using mock data as fallback");
+
+    final mockData = [
+      {
+        "id": 1,
+        "vehicle_number": vehicleNumber,
+        "status": "Pending",
+        "station_name": "Demo Station",
+        "customer_name": "Demo Customer",
+        "product_name": "Demo Product",
+        "qty": 100,
+        "created": "2024-01-01",
+      }
+    ];
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => FillingRequestPage(requestList: mockData),
+      ),
+    );
   }
 
   void _showFeatureDialog(String title) {
@@ -864,7 +1096,9 @@ class _HomePageState extends State<HomePage> {
       context: context,
       builder: (context) => AlertDialog(
         title: Text(title),
-        content: Text(message),
+        content: SingleChildScrollView(
+          child: Text(message),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),

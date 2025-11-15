@@ -1,15 +1,26 @@
 import 'package:flutter/material.dart';
 import 'FillingDetailsScreen.dart';
 
-class FillingRequestPage extends StatelessWidget {
+class FillingRequestPage extends StatefulWidget {
   final List<Map<String, dynamic>> requestList;
 
   const FillingRequestPage({super.key, required this.requestList});
 
   @override
+  State<FillingRequestPage> createState() => _FillingRequestPageState();
+}
+
+class _FillingRequestPageState extends State<FillingRequestPage> {
+  late List<Map<String, dynamic>> filteredList;
+
+  @override
+  void initState() {
+    super.initState();
+    filteredList = List<Map<String, dynamic>>.from(widget.requestList);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    // ab koi status filter nahi hoga, sabhi data vehicle number ke hisaab se dikhega
-    final filteredList = requestList;
 
     return Container(
       color: const Color(0xFF13688B),
@@ -41,8 +52,8 @@ class FillingRequestPage extends StatelessWidget {
                     style: const TextStyle(color: Colors.black87, fontSize: 16),
                     children: [
                       TextSpan(
-                        text: requestList.isNotEmpty
-                            ? requestList[0]['vehicle_number'] ?? ''
+                        text: filteredList.isNotEmpty
+                            ? filteredList[0]['vehicle_number'] ?? ''
                             : '',
                         style: const TextStyle(
                           color: Colors.blue,
@@ -69,23 +80,34 @@ class FillingRequestPage extends StatelessWidget {
                         padding: const EdgeInsets.only(bottom: 12),
                         child: Container(
                           decoration: BoxDecoration(
-                            border: Border.all(color: Colors.grey.shade400),
+                            color: Colors.white,
+                            border: Border.all(color: Colors.grey.shade300),
                             borderRadius: BorderRadius.circular(12),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.05),
+                                blurRadius: 8,
+                                offset: const Offset(0, 2),
+                              )
+                            ],
                           ),
                           child: Column(
                             children: [
-                              infoRow("Request Id", fillingData['rid']),
+                              infoRow("Request Id", fillingData['rid'] ?? fillingData['id']),
                               infoRow("Vehicle Number", fillingData['vehicle_number']),
                               infoRow("Product", fillingData['product_name']),
                               infoRow("Loading Station", fillingData['station_name']),
                               infoRow("Client Name", fillingData['customer_name']),
-                              infoRow("Driver Phone", fillingData['driver_number']),
-                              infoRow("Date & Time", fillingData['created']),
-                              infoRow("Status", fillingData['status'],
-                                  textColor: Colors.orange, isBold: true),
-                              infoRow("Eligibility",
-                                  fillingData['eligibility'] == 'Yes' ? 'Yes' : 'No',
-                                  textColor: Colors.green),
+                              infoRow("Driver Phone", fillingData['driver_number'] ?? fillingData['driver_phone'] ?? fillingData['customer_phone']),
+                              infoRow("Date & Time", fillingData['created'] ?? fillingData['created_at']),
+                              _statusRow(fillingData['status']),
+                              ((fillingData['status']?.toString().toLowerCase() ?? '') == 'pending')
+                                  ? infoRow(
+                                      "Eligibility",
+                                      computeEligibility(fillingData) ? 'Yes' : 'No',
+                                      textColor: Colors.green,
+                                    )
+                                  : const SizedBox.shrink(),
                               actionRow(context, fillingData),
                             ],
                           ),
@@ -139,9 +161,12 @@ class FillingRequestPage extends StatelessWidget {
 
   // action buttons row
   Widget actionRow(BuildContext context, Map fillingData) {
-    bool isEligible = fillingData['eligibility'] == 'Yes';
+    final status = (fillingData['status']?.toString().toLowerCase() ?? '');
+    bool isPending = status == 'pending';
+    bool isProcessing = status == 'processing';
+    bool isEligible = isPending ? computeEligibility(fillingData) : false;
 
-    return isEligible
+    return ((isEligible && isPending) || isProcessing)
         ? Padding(
       padding: const EdgeInsets.symmetric(vertical: 12.0),
       child: Row(
@@ -149,8 +174,8 @@ class FillingRequestPage extends StatelessWidget {
         children: [
           IconButton(
             icon: const Icon(Icons.remove_red_eye, color: Colors.green),
-            onPressed: () {
-              Navigator.push(
+            onPressed: () async {
+              final result = await Navigator.push(
                 context,
                 MaterialPageRoute(
                   builder: (_) => FillingDetailsScreen(
@@ -158,6 +183,19 @@ class FillingRequestPage extends StatelessWidget {
                   ),
                 ),
               );
+              if (result is Map && (result['id'] != null || result['rid'] != null)) {
+                final uid = (result['id'] ?? result['rid']).toString();
+                final idx = filteredList.indexWhere((e) =>
+                    (e['id']?.toString() ?? e['rid']?.toString() ?? '') == uid);
+                if (idx != -1) {
+                  setState(() {
+                    filteredList[idx]['status'] = (result['status'] ?? 'Completed');
+                    if (result['aqty'] != null) {
+                      filteredList[idx]['aqty'] = result['aqty'];
+                    }
+                  });
+                }
+              }
             },
           ),
           IconButton(
@@ -171,5 +209,71 @@ class FillingRequestPage extends StatelessWidget {
       ),
     )
         : const SizedBox();
+  }
+
+  bool computeEligibility(Map data) {
+    final status = (data['status']?.toString().toLowerCase() ?? '');
+    if (status != 'pending') return false;
+    final price = _toDouble(data['price'] ?? data['deal_price']);
+    final qty = _toDouble(data['qty'] ?? data['aqty']);
+    final amtlimit = _toDouble(data['amtlimit']);
+    if (price <= 0) return false;
+    final total = price * qty;
+    return amtlimit >= total;
+  }
+
+  double _toDouble(dynamic v) {
+    if (v == null) return 0;
+    if (v is num) return v.toDouble();
+    return double.tryParse(v.toString()) ?? 0;
+  }
+
+  Color statusColor(dynamic s) {
+    final status = (s?.toString().toLowerCase() ?? '');
+    if (status == 'completed') return Colors.green;
+    if (status == 'processing' || status == 'pending') return Colors.orange;
+    return Colors.black87;
+  }
+
+  Widget _statusRow(dynamic s) {
+    final v = (s ?? '-').toString();
+    final c = statusColor(s);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: Color(0xFFE0E0E0))),
+      ),
+      child: Row(
+        children: [
+          const Expanded(
+            flex: 3,
+            child: Text('Status', style: TextStyle(fontWeight: FontWeight.w600)),
+          ),
+          Container(height: 20, width: 1, color: Colors.grey.shade400, margin: const EdgeInsets.symmetric(horizontal: 8)),
+          Expanded(
+            flex: 5,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: c.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    v.toLowerCase() == 'completed' ? Icons.check_circle : Icons.timelapse,
+                    color: c,
+                    size: 16,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(v, style: TextStyle(color: c, fontWeight: FontWeight.w600)),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
