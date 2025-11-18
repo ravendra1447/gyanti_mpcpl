@@ -101,7 +101,7 @@ class _FillingRequestPageState extends State<FillingRequestPage> {
                               infoRow("Driver Phone", fillingData['driver_number'] ?? fillingData['driver_phone'] ?? fillingData['customer_phone']),
                               infoRow("Date & Time", fillingData['created'] ?? fillingData['created_at']),
                               _statusRow(fillingData['status']),
-                              ((fillingData['status']?.toString().toLowerCase() ?? '') == 'pending')
+                              (_normalizeStatus(fillingData['status']).toLowerCase() == 'pending')
                                   ? infoRow(
                                       "Eligibility",
                                       computeEligibility(fillingData) ? 'Yes' : 'No',
@@ -161,9 +161,9 @@ class _FillingRequestPageState extends State<FillingRequestPage> {
 
   // action buttons row
   Widget actionRow(BuildContext context, Map fillingData) {
-    final status = (fillingData['status']?.toString().toLowerCase() ?? '');
-    bool isPending = status == 'pending';
-    bool isProcessing = status == 'processing';
+    final normalizedStatus = _normalizeStatus(fillingData['status']).toLowerCase();
+    bool isPending = normalizedStatus == 'pending';
+    bool isProcessing = normalizedStatus == 'processing';
     bool isEligible = isPending ? computeEligibility(fillingData) : false;
 
     return ((isEligible && isPending) || isProcessing)
@@ -189,7 +189,10 @@ class _FillingRequestPageState extends State<FillingRequestPage> {
                     (e['id']?.toString() ?? e['rid']?.toString() ?? '') == uid);
                 if (idx != -1) {
                   setState(() {
-                    filteredList[idx]['status'] = (result['status'] ?? 'Completed');
+                    // Update status - could be Processing (after OTP) or Completed (after update)
+                    if (result['status'] != null) {
+                      filteredList[idx]['status'] = result['status'];
+                    }
                     if (result['aqty'] != null) {
                       filteredList[idx]['aqty'] = result['aqty'];
                     }
@@ -212,7 +215,7 @@ class _FillingRequestPageState extends State<FillingRequestPage> {
   }
 
   bool computeEligibility(Map data) {
-    final status = (data['status']?.toString().toLowerCase() ?? '');
+    final status = _normalizeStatus(data['status']).toLowerCase();
     if (status != 'pending') return false;
     final price = _toDouble(data['price'] ?? data['deal_price']);
     final qty = _toDouble(data['qty'] ?? data['aqty']);
@@ -228,15 +231,34 @@ class _FillingRequestPageState extends State<FillingRequestPage> {
     return double.tryParse(v.toString()) ?? 0;
   }
 
+  // Helper function to normalize status values
+  String _normalizeStatus(dynamic status) {
+    if (status == null) return 'Pending';
+    final s = status.toString().toLowerCase().trim();
+    if (s.isEmpty) return 'Pending';
+    // If status is "200" (HTTP code), it means Processing
+    if (s == '200') return 'Processing';
+    // Normalize common variations
+    if (s == 'pending') return 'Pending';
+    if (s == 'processing' || s == 'process') return 'Processing';
+    if (s == 'completed' || s == 'complete') return 'Completed';
+    if (s == 'cancelled' || s == 'cancel') return 'Cancelled';
+    // Return capitalized version if it's a valid status
+    if (s.length > 1) {
+      return s[0].toUpperCase() + s.substring(1);
+    }
+    return s.toUpperCase();
+  }
+
   Color statusColor(dynamic s) {
-    final status = (s?.toString().toLowerCase() ?? '');
-    if (status == 'completed') return Colors.green;
-    if (status == 'processing' || status == 'pending') return Colors.orange;
+    final normalizedStatus = _normalizeStatus(s).toLowerCase();
+    if (normalizedStatus == 'completed') return Colors.green;
+    if (normalizedStatus == 'processing' || normalizedStatus == 'pending') return Colors.orange;
     return Colors.black87;
   }
 
   Widget _statusRow(dynamic s) {
-    final v = (s ?? '-').toString();
+    final v = _normalizeStatus(s);
     final c = statusColor(s);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),

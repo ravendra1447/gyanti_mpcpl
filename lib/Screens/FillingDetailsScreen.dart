@@ -61,27 +61,53 @@ class _FillingDetailsScreenState extends State<FillingDetailsScreen> {
         },
       );
 
-      final result = json.decode(response.body);
-      print("API Response: $result");
+      final apiResult = json.decode(response.body);
+      print("API Response: $apiResult");
 
-      if (response.statusCode == 200 && result['msg'] == "success") {
+      if (response.statusCode == 200 && apiResult['msg'] == "success") {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("OTP Verified")),
         );
-        final result = await Navigator.push(
+        
+        // Update fillingData with new status "processing" after OTP verification
+        // Check if API returned updated status, otherwise default to "Processing"
+        // Note: API might return HTTP status code 200, but we need "Processing" as request status
+        String updatedStatus = 'Processing'; // Default after OTP verification
+        if (apiResult['data'] != null && apiResult['data']['status'] != null) {
+          final apiStatus = apiResult['data']['status'].toString();
+          // If API returns "200" (HTTP code), it means status is Processing
+          if (apiStatus == '200') {
+            updatedStatus = 'Processing';
+          } else if (apiStatus.toLowerCase() != '200') {
+            updatedStatus = apiStatus;
+          }
+        }
+        final updatedFillingData = Map<String, dynamic>.from(widget.fillingData);
+        updatedFillingData['status'] = updatedStatus; // Status changes to Processing after OTP
+        
+        final updateResult = await Navigator.push(
           context,
           MaterialPageRoute(
             builder: (_) => FillingRequestUpdatePage(
-              fillingData: widget.fillingData,
+              fillingData: updatedFillingData,
             ),
           ),
         );
-        if (result != null) {
-          Navigator.pop(context, result);
+        
+        // Return updated status to parent screen
+        if (updateResult != null) {
+          Navigator.pop(context, updateResult);
+        } else {
+          // If no result from update page, still return the status update
+          final requestId = widget.fillingData['id'] ?? widget.fillingData['rid'];
+          Navigator.pop(context, {
+            'id': requestId.toString(),
+            'status': updatedStatus,
+          });
         }
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(result['msg'] ?? "Verification Failed")),
+          SnackBar(content: Text(apiResult['msg'] ?? "Verification Failed")),
         );
       }
     } catch (e) {
